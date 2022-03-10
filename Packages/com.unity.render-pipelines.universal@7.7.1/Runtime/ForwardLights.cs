@@ -1,5 +1,7 @@
 using UnityEngine.Experimental.GlobalIllumination;
 using Unity.Collections;
+// using System;
+// using UnityEngine.Experimental.Rendering;
 
 namespace UnityEngine.Rendering.Universal.Internal
 {
@@ -45,6 +47,8 @@ namespace UnityEngine.Rendering.Universal.Internal
         Vector4[] m_AdditionalLightSpotDirections;
         Vector4[] m_AdditionalLightOcclusionProbeChannels;
 
+        private ComputeBuffer _numCulled, _lightData;
+
         bool m_UseStructuredBuffer;
         
         public ForwardLights()
@@ -77,22 +81,109 @@ namespace UnityEngine.Rendering.Universal.Internal
             }
         }
 
-        public void Setup(ScriptableRenderContext context, ref RenderingData renderingData)
+        public void Setup(ScriptableRenderContext context, ref RenderingData renderingData, ComputeShader lightGridComputer)
         {
             int additionalLightsCount = renderingData.lightData.additionalLightsCount;
-            bool additionalLightsPerVertex = renderingData.lightData.shadeAdditionalLightsPerVertex;
+            LightRenderingMode additionalLightsMode = renderingData.lightData.shadeAdditionalLightsMode;
+            if ((lightGridComputer == null || !SystemInfo.supportsComputeShaders) && additionalLightsMode == LightRenderingMode.ForwardPlus)
+            {
+                additionalLightsMode = LightRenderingMode.PerPixel;
+            }
             CommandBuffer cmd = CommandBufferPool.Get(k_SetupLightConstants);
             SetupShaderLightConstants(cmd, ref renderingData);
 
             CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.AdditionalLightsVertex,
-                additionalLightsCount > 0 && additionalLightsPerVertex);
+                additionalLightsCount > 0 && additionalLightsMode == LightRenderingMode.PerVertex);
             CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.AdditionalLightsPixel,
-                additionalLightsCount > 0 && !additionalLightsPerVertex);
+                additionalLightsCount > 0 && additionalLightsMode == LightRenderingMode.PerPixel);
+            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.AdditionalLightsForwardPlus,
+                additionalLightsCount > 0 && additionalLightsMode == LightRenderingMode.ForwardPlus);
             CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MixedLightingSubtractive,
                 renderingData.lightData.supportsMixedLighting &&
                 m_MixedLightingSetup == MixedLightingSetup.Subtractive);
+            if (additionalLightsMode == LightRenderingMode.ForwardPlus)
+            {
+                SetupLightGridCompute(cmd, lightGridComputer, renderingData);
+            }
             context.ExecuteCommandBuffer(cmd);
             CommandBufferPool.Release(cmd);
+        }
+
+        private static int LIGHT_GRID_PIXEL_SIZE = 64;
+        private static int LIGHT_GRID_DEPTH = 32;
+        private static float LIGHT_NEAR_PLANE_OFFSET = .095f;
+        private static float LIGHT_MAX_FAR_PLANE = 500.0f;
+
+        Vector4 GetLightGridZParams(float NearPlane, float FarPlane, int GLightGridSizeZ)
+        {
+            // S = distribution scale
+            // B, O are solved for given the z distances of the first+last slice, and the # of slices.
+            //
+            // slice = log2(z*B + O) * S
+
+            // Don't spend lots of resolution right in front of the near plane
+            float NearOffset = LIGHT_NEAR_PLANE_OFFSET;
+            // Space out the slices so they aren't all clustered at the near plane
+            float S = 4.05f;
+
+            float N = NearPlane + NearOffset;
+            float F = Mathf.Min(FarPlane, LIGHT_MAX_FAR_PLANE);
+
+            float O = (F - N * Mathf.Pow(2.0f, (GLightGridSizeZ) / S)) / (F - N);
+            float B = (1 - O) / N;
+
+            return new Vector4(B, O, S, NearPlane);
+        }
+
+        public static readonly int lightGridSize = Shader.PropertyToID("_LightGridSize");
+        public static readonly int rwNumCulledLightsGrid = Shader.PropertyToID("_RWNumCulledLightsGrid");
+        public static readonly int rwCulledLightDataGrid = Shader.PropertyToID("_RWCulledLightDataGrid");
+        public static readonly int lightGridZParams = Shader.PropertyToID("_LightGridZParams");
+        public static readonly int numCulledLightsGrid = Shader.PropertyToID("_NumCulledLightsGrid");
+        public static readonly int culledLightDataGrid = Shader.PropertyToID("_CulledLightDataGrid");
+
+        void SetupLightGridCompute(CommandBuffer cmd, ComputeShader compute, RenderingData renderingData)
+        {
+            var gridSize = new Vector3Int((renderingData.cameraData.pixelWidth + LIGHT_GRID_PIXEL_SIZE - 1) / LIGHT_GRID_PIXEL_SIZE,
+                (renderingData.cameraData.pixelHeight + LIGHT_GRID_PIXEL_SIZE - 1) / LIGHT_GRID_PIXEL_SIZE, LIGHT_GRID_DEPTH);
+            if (_numCulled == null || _numCulled.count != (gridSize.x * gridSize.y * gridSize.z))
+            {
+                if (_numCulled != null)
+                {
+                    _numCulled.Release();
+                }
+                if (_lightData != null)
+                {
+                    _lightData.Release();
+                }
+                _numCulled = new ComputeBuffer(gridSize.x * gridSize.y * gridSize.z, 4, ComputeBufferType.Default);
+                _lightData = new ComputeBuffer(gridSize.x * gridSize.y * gridSize.z * renderingData.lightData.maxPerClusterAdditionalLightsCount / 4, 4, ComputeBufferType.Default);
+            }
+
+            // RenderTextureDescriptor desc = new RenderTextureDescriptor();
+            // desc.width = gridSize.x;
+            // desc.height = gridSize.y;
+            // desc.volumeDepth = gridSize.z;
+            // desc.dimension = TextureDimension.Tex3D;
+            // desc.enableRandomWrite = true;
+            // desc.graphicsFormat = GraphicsFormat.R16G16B16A16_SFloat;
+            // desc.msaaSamples = 1;
+            // cmd.GetTemporaryRT(_debugTex.id, desc);
+
+            // var invProjection = cameraData.GetGPUProjectionMatrix().inverse;
+            // cmd.SetComputeMatrixParam(compute, "_InvProjection", invProjection);
+            bool fastAttenuation = Application.isMobilePlatform || SystemInfo.graphicsDeviceType == GraphicsDeviceType.Switch;
+            cmd.SetGlobalVector(lightGridSize, new Vector4(gridSize.x, gridSize.y, gridSize.z, fastAttenuation ? -0.36f : 1.0f)); // (0.8f * 0.8f - 1.0f) = -0.36f
+            cmd.SetComputeBufferParam(compute, 0, rwNumCulledLightsGrid, _numCulled);
+            cmd.SetComputeBufferParam(compute, 0, rwCulledLightDataGrid, _lightData);
+            // cmd.SetComputeTextureParam(compute, 0, "_DebugTex", _debugTex.Identifier());
+            Camera camera = renderingData.cameraData.camera;
+            var lightGridZParamsData = GetLightGridZParams(camera.nearClipPlane, camera.farClipPlane, gridSize.z);
+
+            cmd.SetGlobalVector(lightGridZParams, lightGridZParamsData);
+            cmd.DispatchCompute(compute, 0, (gridSize.x + 3) / 4, (gridSize.y + 3) / 4, (gridSize.z + 3) / 4);
+            cmd.SetGlobalBuffer(numCulledLightsGrid, _numCulled);
+            cmd.SetGlobalBuffer(culledLightDataGrid, _lightData);
         }
 
         void InitializeLightConstants(NativeArray<VisibleLight> lights, int lightIndex, out Vector4 lightPos, out Vector4 lightColor, out Vector4 lightAttenuation, out Vector4 lightSpotDir, out Vector4 lightOcclusionProbeChannel)
@@ -157,13 +248,16 @@ namespace UnityEngine.Rendering.Universal.Internal
                 Vector4 dir = lightData.localToWorldMatrix.GetColumn(2);
                 lightSpotDir = new Vector4(-dir.x, -dir.y, -dir.z, 0.0f);
 
+                float lightAngle = Mathf.Deg2Rad * lightData.spotAngle * 0.5f;
+                lightSpotDir.w = Mathf.Tan(lightAngle);
+
                 // Spot Attenuation with a linear falloff can be defined as
                 // (SdotL - cosOuterAngle) / (cosInnerAngle - cosOuterAngle)
                 // This can be rewritten as
                 // invAngleRange = 1.0 / (cosInnerAngle - cosOuterAngle)
                 // SdotL * invAngleRange + (-cosOuterAngle * invAngleRange)
                 // If we precompute the terms in a MAD instruction
-                float cosOuterAngle = Mathf.Cos(Mathf.Deg2Rad * lightData.spotAngle * 0.5f);
+                float cosOuterAngle = Mathf.Cos(lightAngle);
                 // We neeed to do a null check for particle lights
                 // This should be changed in the future
                 // Particle lights will use an inline function
@@ -280,8 +374,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                     cmd.SetGlobalVectorArray(LightConstantBuffer._AdditionalLightOcclusionProbeChannel, m_AdditionalLightOcclusionProbeChannels);
                 }
 
-                cmd.SetGlobalVector(LightConstantBuffer._AdditionalLightsCount, new Vector4(lightData.maxPerObjectAdditionalLightsCount,
-                    0.0f, 0.0f, 0.0f));
+                cmd.SetGlobalVector(LightConstantBuffer._AdditionalLightsCount, new Vector4(lightData.maxPerObjectAdditionalLightsCount, lightData.additionalLightsCount, lightData.maxPerClusterAdditionalLightsCount, 0.0f));
             }
             else
             {
