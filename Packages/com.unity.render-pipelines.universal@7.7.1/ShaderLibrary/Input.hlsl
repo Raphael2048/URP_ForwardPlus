@@ -40,6 +40,10 @@ float4 _ScaledScreenParams;
 float4 _MainLightPosition;
 half4 _MainLightColor;
 
+// X: PerPixelLight MaxLightPerObject
+// Y: AdditionalLightsCount
+// Z: ForwardPlus MaxLightsCountPerCluster
+// W: 1:Use LinkedList ForwardPlus 0: Use Array ForwardPlus
 float4 _AdditionalLightsCount;
 #if USE_STRUCTURED_BUFFER_FOR_LIGHT_DATA
 StructuredBuffer<LightData> _AdditionalLightsBuffer;

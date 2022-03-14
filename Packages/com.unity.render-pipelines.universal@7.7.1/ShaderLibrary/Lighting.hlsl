@@ -613,19 +613,37 @@ half4 UniversalFragmentPBR(InputData inputData, half3 albedo, half metallic, hal
 
 #ifdef _ADDITIONAL_LIGHTS_FORWARD_PLUS
     uint GridIndex = ComputeLightGridCellIndex(inputData.positionCS);
-    uint lightCount = _NumCulledLightsGrid[GridIndex];
-    if (lightCount > 0)
+    if (_AdditionalLightsCount.w > 0)
     {
-        uint maxLightsPerCluster = _AdditionalLightsCount.z;
-        uint maxValueCount = maxLightsPerCluster >> 2;
-        UNITY_LOOP
-        for (uint i = 0u; i < lightCount; ++i)
+        uint lightCount = _NumCulledLightsGrid[GridIndex * 2];
+        if (lightCount > 0)
         {
-            uint step = i >> 2; // i / 4 = step
-            uint value = _CulledLightDataGrid[GridIndex * maxValueCount + step];
-            uint lightIndex = (value >> (24 - (i - step * 4) * 8)) & 0xFF;
-            Light light = GetAdditionalPerObjectLight(lightIndex, inputData.positionWS);
-            color += LightingPhysicallyBased(brdfData, light, inputData.normalWS, inputData.viewDirectionWS);
+            uint lightIndexBegin = _NumCulledLightsGrid[GridIndex * 2 + 1];
+            UNITY_LOOP
+            for (uint i = 0u; i < lightCount; ++i)
+            {
+                uint lightIndex = _CulledLightDataGrid[lightIndexBegin + i];
+                Light light = GetAdditionalPerObjectLight(lightIndex, inputData.positionWS);
+                color += LightingPhysicallyBased(brdfData, light, inputData.normalWS, inputData.viewDirectionWS);
+            }
+        }
+    }
+    else
+    {
+        uint lightCount = _NumCulledLightsGrid[GridIndex];
+        if (lightCount > 0)
+        {
+            uint maxLightsPerCluster = _AdditionalLightsCount.z;
+            uint maxValueCount = maxLightsPerCluster >> 2;
+            UNITY_LOOP
+            for (uint i = 0u; i < lightCount; ++i)
+            {
+                uint step = i >> 2; // i / 4 = step
+                uint value = _CulledLightDataGrid[GridIndex * maxValueCount + step];
+                uint lightIndex = (value >> (24 - (i - step * 4) * 8)) & 0xFF;
+                Light light = GetAdditionalPerObjectLight(lightIndex, inputData.positionWS);
+                color += LightingPhysicallyBased(brdfData, light, inputData.normalWS, inputData.viewDirectionWS);
+            }
         }
     }
 #endif
@@ -660,21 +678,40 @@ half4 UniversalFragmentBlinnPhong(InputData inputData, half3 diffuse, half4 spec
 
 #ifdef _ADDITIONAL_LIGHTS_FORWARD_PLUS
     uint GridIndex = ComputeLightGridCellIndex(inputData.positionCS);
-    uint lightCount = _NumCulledLightsGrid[GridIndex];
-    if (lightCount > 0)
+    if (_AdditionalLightsCount.w > 0)
     {
-        uint maxLightsPerCluster = _AdditionalLightsCount.z;
-        uint maxValueCount = maxLightsPerCluster >> 2;
-        UNITY_LOOP
-        for (uint i = 0u; i < lightCount; ++i)
+        uint lightCount = _NumCulledLightsGrid[GridIndex * 2];
+        if (lightCount > 0)
         {
-            uint step = i >> 2; // i / 4 = step
-            uint value = _CulledLightDataGrid[GridIndex * maxValueCount + step];
-            uint lightIndex = (value >> (24 - (i - step * 4) * 8)) & 0xFF;
-            Light light = GetAdditionalPerObjectLight(lightIndex, inputData.positionWS);
-            half3 attenuatedLightColor = light.color * (light.distanceAttenuation * light.shadowAttenuation);
-            diffuseColor += LightingLambert(attenuatedLightColor, light.direction, inputData.normalWS);
-            specularColor += LightingSpecular(attenuatedLightColor, light.direction, inputData.normalWS, inputData.viewDirectionWS, specularGloss, smoothness);
+            uint lightIndexBegin = _NumCulledLightsGrid[GridIndex * 2 + 1];
+            UNITY_LOOP
+            for (uint i = 0u; i < lightCount; ++i)
+            {
+                uint lightIndex = _CulledLightDataGrid[lightIndexBegin + i];
+                Light light = GetAdditionalPerObjectLight(lightIndex, inputData.positionWS);
+                diffuseColor += LightingLambert(attenuatedLightColor, light.direction, inputData.normalWS);
+                specularColor += LightingSpecular(attenuatedLightColor, light.direction, inputData.normalWS, inputData.viewDirectionWS, specularGloss, smoothness);
+            }
+        }
+    }
+    else
+    {
+        uint lightCount = _NumCulledLightsGrid[GridIndex];
+        if (lightCount > 0)
+        {
+            uint maxLightsPerCluster = _AdditionalLightsCount.z;
+            uint maxValueCount = maxLightsPerCluster >> 2;
+            UNITY_LOOP
+            for (uint i = 0u; i < lightCount; ++i)
+            {
+                uint step = i >> 2; // i / 4 = step
+                uint value = _CulledLightDataGrid[GridIndex * maxValueCount + step];
+                uint lightIndex = (value >> (24 - (i - step * 4) * 8)) & 0xFF;
+                Light light = GetAdditionalPerObjectLight(lightIndex, inputData.positionWS);
+                half3 attenuatedLightColor = light.color * (light.distanceAttenuation * light.shadowAttenuation);
+                diffuseColor += LightingLambert(attenuatedLightColor, light.direction, inputData.normalWS);
+                specularColor += LightingSpecular(attenuatedLightColor, light.direction, inputData.normalWS, inputData.viewDirectionWS, specularGloss, smoothness);
+            }
         }
     }
 #endif

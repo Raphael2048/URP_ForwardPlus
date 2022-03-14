@@ -305,7 +305,7 @@ namespace UnityEditor.Rendering.Universal
                 if (pipelineAsset.supportsAdditionalLightShadows)
                     shaderFeatures |= ShaderFeatures.AdditionalLightShadows;
             }
-            else if (pipelineAsset.additionalLightsRenderingMode == LightRenderingMode.ForwardPlus)
+            else if (pipelineAsset.additionalLightsRenderingMode == LightRenderingMode.ForwardPlus || pipelineAsset.additionalLightsRenderingMode == LightRenderingMode.ForwardPlusLinkedList)
             {
                 shaderFeatures |= ShaderFeatures.AdditionalLightsForwardPlus;
             }

@@ -308,13 +308,13 @@ namespace UnityEditor.Rendering.Universal
                 m_AdditionalLightsRenderingModeProp.intValue = (int)selectedLightRenderingMode;
                 EditorGUI.indentLevel++;
 
-                disableGroup = m_AdditionalLightsRenderingModeProp.intValue != (int)LightRenderingMode.ForwardPlus;
+                disableGroup = m_AdditionalLightsRenderingModeProp.intValue < (int)LightRenderingMode.ForwardPlus;
                 EditorGUI.BeginDisabledGroup(disableGroup);
-                m_AdditionalLightsPerClusterLimitProp.intValue = EditorGUILayout.IntSlider(Styles.perClusterLimit, m_AdditionalLightsPerClusterLimitProp.intValue, 4, UniversalRenderPipeline.maxVisibleAdditionalLights);
+                m_AdditionalLightsPerClusterLimitProp.intValue = EditorGUILayout.IntSlider(Styles.perClusterLimit, m_AdditionalLightsPerClusterLimitProp.intValue, 4, UniversalRenderPipeline.maxVisibleAdditionalLights / 4);
                 m_AdditionalLightsPerClusterLimitProp.intValue = m_AdditionalLightsPerClusterLimitProp.intValue / 4 * 4;
                 EditorGUI.EndDisabledGroup();
 
-                disableGroup = m_AdditionalLightsRenderingModeProp.intValue == (int)LightRenderingMode.Disabled || m_AdditionalLightsRenderingModeProp.intValue == (int)LightRenderingMode.ForwardPlus;
+                disableGroup = m_AdditionalLightsRenderingModeProp.intValue == (int)LightRenderingMode.Disabled || m_AdditionalLightsRenderingModeProp.intValue >= (int)LightRenderingMode.ForwardPlus;
                 EditorGUI.BeginDisabledGroup(disableGroup);
                 m_AdditionalLightsPerObjectLimitProp.intValue = EditorGUILayout.IntSlider(Styles.perObjectLimit, m_AdditionalLightsPerObjectLimitProp.intValue, 0, UniversalRenderPipeline.maxPerObjectLights);
                 EditorGUI.EndDisabledGroup();

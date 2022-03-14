@@ -74,6 +74,7 @@ namespace UnityEngine.Rendering.Universal
         PerVertex = 2,
         PerPixel = 1,
         ForwardPlus = 3,
+        ForwardPlusLinkedList = 4,
     }
 
     [MovedFrom("UnityEngine.Rendering.LWRP")] public enum ShaderVariantLogLevel

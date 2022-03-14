@@ -1,11 +1,23 @@
 ﻿#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
+
+// 使用数组格式
 RWStructuredBuffer<uint> _RWNumCulledLightsGrid;
 RWStructuredBuffer<uint> _RWCulledLightDataGrid;
+#pragma kernel LightGridCS // 0
+
+// 使用链表格式
+RWStructuredBuffer<uint> _RWNextCulledLightLink; // length=1
+RWStructuredBuffer<uint> _RWNextCulledLightData; // length=1
+RWStructuredBuffer<uint> _RWStartOffsetGrid;
+RWStructuredBuffer<uint> _RWCulledLightLinks;
+
 // RWTexture3D<float4> _DebugTex;
-// float4x4 _InvProjection;
-// #pragma enable_d3d11_debug_symbols
-#pragma kernel LightGridCS
+#pragma enable_d3d11_debug_symbols
+#pragma kernel ClearStartOffsetGrid // 1
+#pragma kernel ClearLink // 2
+#pragma kernel LightGridCS USE_LINKED_CULL_LIST // 3
+#pragma kernel LightGridCompactCS 
 
 float SquareDistanceFromBoxToPoint(float3 BoxCenter, float3 BoxExtent, float3 InPoint)
 {
@@ -86,6 +98,8 @@ void LightGridCS(uint3 id : SV_DispatchThreadID)
 		uint ClusterLightCount = 0;
 		uint maxLightsPerCluster = _AdditionalLightsCount.z;
 		uint maxValueCount = maxLightsPerCluster >> 2;
+		// 计算最大个数的规则和C#中代码相同
+		uint maxAvaliableCount = _AdditionalLightsCount.z * _LightGridSize.x * _LightGridSize.y * _LightGridSize.z / 8;
 		UNITY_LOOP
 		for(uint i = 0; i < AllLightsCount; ++i)
 		{
@@ -116,6 +130,19 @@ void LightGridCS(uint3 id : SV_DispatchThreadID)
 					}
 				}
 			}
+
+#ifdef USE_LINKED_CULL_LIST
+			uint NextLink;
+			InterlockedAdd(_RWNextCulledLightLink[0], 1U, NextLink);
+			if (NextLink < maxAvaliableCount)
+			{
+				uint PreviousLink;
+				InterlockedExchange(_RWStartOffsetGrid[GridIndex], NextLink, PreviousLink);
+				_RWCulledLightLinks[NextLink * 2 + 0] = i;
+				_RWCulledLightLinks[NextLink * 2 + 1] = PreviousLink;
+			}
+		}
+#else
 			uint step = ClusterLightCount >> 2; // ClusterLightCount / 4 = step
 			uint index = GridIndex * maxValueCount + step;
 			_RWCulledLightDataGrid[index] = (step * 4 == ClusterLightCount) ? 0 : _RWCulledLightDataGrid[index];
@@ -124,7 +151,59 @@ void LightGridCS(uint3 id : SV_DispatchThreadID)
 			if(ClusterLightCount == maxLightsPerCluster) break;
 		}
 		_RWNumCulledLightsGrid[GridIndex] = ClusterLightCount;
-		// float g = EyeDepthToLightGridZ(-ViewClusterCenter.z);
-		// _DebugTex[id] = float4(ClusterLightCount, LightGridZToEyeDepth(id.z), LightGridZToEyeDepth(id.z + 1), g);
+#endif
+	}
+}
+
+
+[numthreads(4, 4, 4)]
+void LightGridCompactCS(uint3 id: SV_DispatchThreadID)
+{
+	if(all(id < _LightGridSize))
+	{
+		uint GridIndex = (id.z * _LightGridSize.y + id.y) * _LightGridSize.x + id.x;
+		
+		uint NumCulledLights = 0;
+		uint StartLinkOffset = _RWStartOffsetGrid[GridIndex];
+		uint LinkOffset = StartLinkOffset;
+		uint CulledLightDataStart = 0;
+		while( LinkOffset != 0xFFFFFFFF && NumCulledLights < _AdditionalLightsCount.y)
+		{
+			NumCulledLights++;
+			LinkOffset = _RWCulledLightLinks[LinkOffset * 2 + 1];
+		}
+
+		InterlockedAdd(_RWNextCulledLightData[0], NumCulledLights, CulledLightDataStart);
+		
+		_RWNumCulledLightsGrid[GridIndex * 2 + 0] = NumCulledLights; 
+		_RWNumCulledLightsGrid[GridIndex * 2 + 1] = CulledLightDataStart;
+
+		LinkOffset = StartLinkOffset;
+		uint CulledLightIndex = 0;
+
+		while (LinkOffset != 0xFFFFFFFF && CulledLightIndex < NumCulledLights)
+		{
+			// Reverse the order as we write them out, which restores the original order before the reverse linked list was built
+			_RWCulledLightDataGrid[CulledLightDataStart + NumCulledLights - CulledLightIndex - 1] = _RWCulledLightLinks[LinkOffset * 2 + 0];
+			CulledLightIndex++;
+			LinkOffset = _RWCulledLightLinks[LinkOffset * 2 + 1];
+		}
+	}
+}
+ 
+[numthreads(1, 1, 1)]
+void ClearLink()
+{
+	_RWNextCulledLightLink[0] = 0;
+	_RWNextCulledLightData[0] = 0;
+}
+
+[numthreads(4, 4, 4)]
+void ClearStartOffsetGrid(uint3 id : SV_DispatchThreadID)
+{
+	if(all(id < _LightGridSize))
+	{
+		uint GridIndex = (id.z * _LightGridSize.y + id.y) * _LightGridSize.x + id.x;
+		_RWStartOffsetGrid[GridIndex] = 0xFFFFFFFF;
 	}
 }
