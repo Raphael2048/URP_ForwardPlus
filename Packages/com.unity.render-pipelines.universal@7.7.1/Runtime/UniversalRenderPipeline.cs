@@ -758,7 +758,7 @@ namespace UnityEngine.Rendering.Universal
                                         visibleLights[mainLightIndex].light.shadows != LightShadows.None);
 
                 // If additional lights are shaded per-pixel they cannot cast shadows
-                if (settings.additionalLightsRenderingMode == LightRenderingMode.PerPixel)
+                if (settings.additionalLightsRenderingMode == LightRenderingMode.PerPixel || settings.additionalLightsRenderingMode >= LightRenderingMode.ForwardPlus)
                 {
                     for (int i = 0; i < visibleLights.Length; ++i)
                     {
@@ -780,7 +780,7 @@ namespace UnityEngine.Rendering.Universal
             renderingData.cullResults = cullResults;
             renderingData.cameraData = cameraData;
             InitializeLightData(settings, visibleLights, mainLightIndex, out renderingData.lightData);
-            InitializeShadowData(settings, visibleLights, mainLightCastShadows, additionalLightsCastShadows && renderingData.lightData.shadeAdditionalLightsMode == LightRenderingMode.PerPixel, out renderingData.shadowData);
+            InitializeShadowData(settings, visibleLights, mainLightCastShadows, additionalLightsCastShadows, out renderingData.shadowData);
             InitializePostProcessingData(settings, out renderingData.postProcessingData);
             renderingData.supportsDynamicBatching = settings.supportsDynamicBatching;
             renderingData.perObjectData = GetPerObjectLightFlags(renderingData.lightData.additionalLightsCount);
